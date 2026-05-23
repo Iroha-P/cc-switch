@@ -27,6 +27,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Shuffle,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -76,6 +77,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
+import QuickSwitchManager from "@/components/quick-switch/QuickSwitchManager";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
@@ -99,6 +101,7 @@ type View =
   | "mcp"
   | "agents"
   | "universal"
+  | "quickSwitch"
   | "sessions"
   | "workspace"
   | "openclawEnv"
@@ -144,6 +147,7 @@ const VALID_VIEWS: View[] = [
   "mcp",
   "agents",
   "universal",
+  "quickSwitch",
   "sessions",
   "workspace",
   "openclawEnv",
@@ -975,6 +979,8 @@ function App() {
               <UniversalProviderPanel />
             </div>
           );
+        case "quickSwitch":
+          return <QuickSwitchManager />;
 
         case "sessions":
           return (
@@ -1206,6 +1212,7 @@ function App() {
                     t("universalProvider.title", {
                       defaultValue: "统一供应商",
                     })}
+                  {currentView === "quickSwitch" && "Quick Switch"}
                   {currentView === "sessions" && t("sessionManager.title")}
                   {currentView === "workspace" && t("workspace.title")}
                   {currentView === "openclawEnv" && t("openclaw.env.title")}
@@ -1515,6 +1522,15 @@ function App() {
                             </>
                           ) : (
                             <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("quickSwitch")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title="Quick Switch"
+                              >
+                                <Shuffle className="w-4 h-4" />
+                              </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
