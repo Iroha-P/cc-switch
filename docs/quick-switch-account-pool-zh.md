@@ -242,6 +242,46 @@ Codex CLI 通常在新进程启动时读取配置。切换后建议使用 Quick 
 
 每个账号池会显示当前启用的账号、账号总数，以及每个 Provider 的类型和状态。
 
+### Codex CLI 自动检测额度用完
+
+Codex CLI 账号池默认开启 `Auto on`。开启后，Quick Switch 会定期扫描最近的 Codex CLI 本地 session 消息，发现额度或频率限制错误后自动执行切号流程。
+
+会识别的典型错误包括：
+
+- `insufficient_quota`
+- `quota exceeded`
+- `quota_exceeded`
+- `usage limit reached`
+- `usage limit exceeded`
+- `billing_hard_limit_reached`
+- `rate limit`
+- `rate_limit_exceeded`
+- `too many requests`
+- `HTTP 429`
+- `out of credits`
+- `exceeded your current quota`
+
+检测到错误后会自动执行：
+
+1. 把当前 Codex CLI Provider 标记为 Used up。
+2. 跳过其它 Used up 账号。
+3. 切换到下一个 Available Codex CLI Provider。
+4. 优先恢复最近的 Codex CLI 本地会话。
+
+为了避免同一条错误消息反复触发，Quick Switch 会记录已处理过的 session 错误签名，键名为：
+
+```text
+cc-switch.quick-switch.quota-detection-handled
+```
+
+如果你不想自动切号，可以在 Codex CLI 账号池右上角点击 `Auto on`，切换为 `Auto off`。该开关会保存在本地：
+
+```text
+cc-switch.quick-switch.auto-detect-codex-quota
+```
+
+注意：自动检测读取的是 Codex CLI 本地 session 记录，不会监控或改写 Codex Desktop。
+
 ### 一键切下一个可用账号
 
 点击账号池右上角的 `Next`：
@@ -321,6 +361,8 @@ CC Switch 的 Sessions 功能会记录本地 CLI 会话。如果最近的会话�
 Codex CLI 使用本机 CLI 配置文件，例如 `~/.codex/auth.json` 和 `~/.codex/config.toml`。Codex Desktop 使用桌面应用自己的登录态和运行环境。
 
 Quick Switch 只改 CLI 配置，不会触碰桌面端登录状态。这样可以避免把桌面端正在使用的账号意外切走。
+
+Codex Desktop 在 Quick Switch 中只作为提醒边界处理：你可以用文档和命名规则管理它与 CLI 的区别，但当前版本不会直接切 Codex Desktop 登录态。
 
 ### 点击切换后旧终端没有变化怎么办？
 

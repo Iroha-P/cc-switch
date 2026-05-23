@@ -265,6 +265,10 @@ docs/quick-switch-account-pool-zh.md
 2. 切到下一个 Available Provider。
 3. 优先打开最近本地会话的恢复终端。
 
+Codex CLI 账号池右上角还有 `Auto on` / `Auto off` 开关。默认开启时，Quick Switch 会扫描最近的 Codex CLI 本地 session 消息，检测到 `insufficient_quota`、`quota exceeded`、`rate_limit_exceeded`、`HTTP 429` 等额度错误后，自动执行 `Use next` 的切号流程。
+
+Codex Desktop 只做提醒和边界说明，不会被 Quick Switch 直接改写登录态。
+
 ## 常见报错处理
 
 ### cargo metadata: program not found

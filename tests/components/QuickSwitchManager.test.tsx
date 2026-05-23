@@ -3,16 +3,21 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import QuickSwitchManager from "@/components/quick-switch/QuickSwitchManager";
 import { sessionsApi } from "@/lib/api/sessions";
-import { resetProviderState, setProviders } from "../msw/state";
+import {
+  resetProviderState,
+  setProviders,
+  setSessionFixtures,
+} from "../msw/state";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+const toastWarningMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
-    warning: vi.fn(),
+    warning: (...args: unknown[]) => toastWarningMock(...args),
   },
 }));
 
@@ -37,6 +42,7 @@ describe("QuickSwitchManager", () => {
     localStorage.clear();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+    toastWarningMock.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -164,6 +170,62 @@ describe("QuickSwitchManager", () => {
     await waitFor(() => {
       expect(launchTerminalSpy).toHaveBeenCalledWith({
         command: "codex resume codex-session-1",
+        cwd: "/mock/codex",
+      });
+    });
+
+    const codexSection = screen.getByTestId("quick-switch-codex");
+    expect(codexSection.textContent).toContain("Codex Secondary");
+    expect(codexSection.textContent).toContain("Used up");
+  });
+
+  it("automatically detects Codex CLI quota exhaustion and switches to the next account", async () => {
+    const launchTerminalSpy = vi
+      .spyOn(sessionsApi, "launchTerminal")
+      .mockResolvedValue(true);
+
+    setSessionFixtures(
+      [
+        {
+          providerId: "codex",
+          sessionId: "codex-quota-session",
+          title: "Codex quota session",
+          projectDir: "/mock/codex",
+          createdAt: Date.now() - 2000,
+          lastActiveAt: Date.now() - 1000,
+          sourcePath: "/mock/codex/quota-session.jsonl",
+          resumeCommand: "codex resume codex-quota-session",
+        },
+      ],
+      {
+        "codex:/mock/codex/quota-session.jsonl": [
+          {
+            role: "assistant",
+            content:
+              "Request failed: insufficient_quota. You exceeded your current quota, please check your plan and billing details.",
+            ts: Date.now(),
+          },
+        ],
+      },
+    );
+
+    renderQuickSwitch();
+
+    expect(
+      await screen.findByRole("button", {
+        name: /toggle Codex CLI quota auto switch/i,
+      }),
+    ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(toastWarningMock).toHaveBeenCalledWith(
+        expect.stringContaining("Detected Codex CLI quota limit"),
+      );
+    });
+
+    await waitFor(() => {
+      expect(launchTerminalSpy).toHaveBeenCalledWith({
+        command: "codex resume codex-quota-session",
         cwd: "/mock/codex",
       });
     });

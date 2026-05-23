@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Ban,
   CheckCircle2,
   KeyRound,
@@ -9,7 +10,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { Provider } from "@/types";
+import type { Provider, SessionMessage } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { sessionsApi } from "@/lib/api/sessions";
@@ -43,8 +44,60 @@ const QUICK_SWITCH_APPS: QuickSwitchApp[] = [
 
 type AccountStatus = "available" | "used-up";
 type AccountStatusMap = Record<string, AccountStatus>;
+type QuotaDetectionMap = Record<string, boolean>;
 
 const ACCOUNT_STATUS_STORAGE_KEY = "cc-switch.quick-switch.account-status";
+const AUTO_DETECT_CODEX_QUOTA_STORAGE_KEY =
+  "cc-switch.quick-switch.auto-detect-codex-quota";
+const QUOTA_DETECTION_STORAGE_KEY =
+  "cc-switch.quick-switch.quota-detection-handled";
+const CODEX_QUOTA_SCAN_INTERVAL_MS = 15_000;
+
+const CODEX_QUOTA_ERROR_PATTERNS: Array<{
+  reason: string;
+  matches: (normalized: string) => boolean;
+}> = [
+  {
+    reason: "insufficient_quota",
+    matches: (text) => text.includes("insufficient_quota"),
+  },
+  {
+    reason: "quota exceeded",
+    matches: (text) =>
+      text.includes("quota exceeded") || text.includes("quota_exceeded"),
+  },
+  {
+    reason: "usage limit reached",
+    matches: (text) =>
+      text.includes("usage limit reached") ||
+      text.includes("usage limit exceeded"),
+  },
+  {
+    reason: "billing hard limit",
+    matches: (text) => text.includes("billing_hard_limit_reached"),
+  },
+  {
+    reason: "rate limit",
+    matches: (text) =>
+      text.includes("rate limit") ||
+      text.includes("rate_limit_exceeded") ||
+      text.includes("too many requests"),
+  },
+  {
+    reason: "HTTP 429",
+    matches: (text) =>
+      text.includes("http 429") ||
+      text.includes("status 429") ||
+      text.includes("error 429"),
+  },
+  {
+    reason: "credit balance",
+    matches: (text) =>
+      text.includes("out of credits") ||
+      text.includes("credit balance") ||
+      text.includes("exceeded your current quota"),
+  },
+];
 
 const accountKey = (appId: QuickSwitchAppId, providerId: string) =>
   `${appId}:${providerId}`;
@@ -68,6 +121,40 @@ function writeAccountStatuses(statuses: AccountStatusMap) {
   window.localStorage.setItem(
     ACCOUNT_STATUS_STORAGE_KEY,
     JSON.stringify(statuses),
+  );
+}
+
+function readStoredBoolean(key: string, fallback: boolean) {
+  if (typeof window === "undefined") return fallback;
+  const value = window.localStorage.getItem(key);
+  if (value === null) return fallback;
+  return value === "true";
+}
+
+function writeStoredBoolean(key: string, value: boolean) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, String(value));
+}
+
+function readQuotaDetections(): QuotaDetectionMap {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(QUOTA_DETECTION_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed as QuotaDetectionMap;
+  } catch {
+    return {};
+  }
+}
+
+function writeQuotaDetections(detections: QuotaDetectionMap) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    QUOTA_DETECTION_STORAGE_KEY,
+    JSON.stringify(detections),
   );
 }
 
@@ -133,9 +220,36 @@ function getProviderEndpoint(provider: Provider) {
   return "Official login or local config";
 }
 
+function detectCodexQuotaExhaustion(
+  messages: SessionMessage[],
+  sourcePath: string,
+) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const content = message.content?.trim();
+    if (!content) continue;
+
+    const normalized = content.toLowerCase();
+    const matched = CODEX_QUOTA_ERROR_PATTERNS.find(({ matches }) =>
+      matches(normalized),
+    );
+    if (!matched) continue;
+
+    const ts = message.ts ?? index;
+    return {
+      reason: matched.reason,
+      signature: `${sourcePath}:${ts}:${matched.reason}:${content.length}:${content.slice(0, 80)}`,
+    };
+  }
+
+  return null;
+}
+
 interface QuickSwitchSectionProps {
   app: QuickSwitchApp;
   accountStatuses: AccountStatusMap;
+  autoDetectCodexQuota: boolean;
+  onAutoDetectCodexQuotaChange: (enabled: boolean) => void;
   onStatusChange: (
     appId: QuickSwitchAppId,
     providerId: string,
@@ -146,11 +260,18 @@ interface QuickSwitchSectionProps {
 function QuickSwitchSection({
   app,
   accountStatuses,
+  autoDetectCodexQuota,
+  onAutoDetectCodexQuotaChange,
   onStatusChange,
 }: QuickSwitchSectionProps) {
   const { data, isLoading } = useProvidersQuery(app.id);
   const { data: sessions = [] } = useSessionsQuery();
   const { switchProvider } = useProviderActions(app.id, false, false);
+  const quotaDetectionInFlightRef = useRef(false);
+  const handledQuotaDetectionsRef = useRef<QuotaDetectionMap>(
+    readQuotaDetections(),
+  );
+  const [isScanningQuota, setIsScanningQuota] = useState(false);
 
   const providers = data?.providers ?? {};
   const currentProviderId = data?.currentProviderId ?? "";
@@ -240,6 +361,76 @@ function QuickSwitchSection({
     await handleSwitchNextAndResume();
   };
 
+  useEffect(() => {
+    if (
+      app.id !== "codex" ||
+      !autoDetectCodexQuota ||
+      !currentProvider ||
+      getStatus(currentProvider.id) === "used-up" ||
+      orderedProviders.length < 2 ||
+      !latestSession?.sourcePath
+    ) {
+      return;
+    }
+
+    let disposed = false;
+
+    const scanLatestSession = async () => {
+      if (quotaDetectionInFlightRef.current) return;
+      quotaDetectionInFlightRef.current = true;
+      setIsScanningQuota(true);
+
+      try {
+        const messages = await sessionsApi.getMessages(
+          "codex",
+          latestSession.sourcePath!,
+        );
+        const detection = detectCodexQuotaExhaustion(
+          messages,
+          latestSession.sourcePath!,
+        );
+        if (!detection || disposed) return;
+        if (handledQuotaDetectionsRef.current[detection.signature]) return;
+
+        const nextHandled = {
+          ...handledQuotaDetectionsRef.current,
+          [detection.signature]: true,
+        };
+        handledQuotaDetectionsRef.current = nextHandled;
+        writeQuotaDetections(nextHandled);
+
+        onStatusChange("codex", currentProvider.id, "used-up");
+        toast.warning(
+          `Detected Codex CLI quota limit (${detection.reason}). Switching to the next available account.`,
+        );
+        await handleSwitchNextAndResume();
+      } catch (error) {
+        console.warn("[QuickSwitch] Failed to scan Codex quota state", error);
+      } finally {
+        quotaDetectionInFlightRef.current = false;
+        if (!disposed) setIsScanningQuota(false);
+      }
+    };
+
+    void scanLatestSession();
+    const interval = window.setInterval(
+      () => void scanLatestSession(),
+      CODEX_QUOTA_SCAN_INTERVAL_MS,
+    );
+
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [
+    app.id,
+    autoDetectCodexQuota,
+    currentProvider?.id,
+    latestSession?.sourcePath,
+    orderedProviders.length,
+    accountStatuses,
+  ]);
+
   const handleOpenTerminal = async (provider: Provider) => {
     try {
       await providersApi.openTerminal(provider.id, app.id);
@@ -273,6 +464,28 @@ function QuickSwitchSection({
           </p>
         </div>
         <div className="flex shrink-0 items-start gap-2">
+          {app.id === "codex" && (
+            <Button
+              type="button"
+              variant={autoDetectCodexQuota ? "secondary" : "outline"}
+              size="sm"
+              onClick={() =>
+                onAutoDetectCodexQuotaChange(!autoDetectCodexQuota)
+              }
+              aria-label="toggle Codex CLI quota auto switch"
+              className="h-8"
+              title="Scan Codex CLI session logs for quota errors and switch automatically"
+            >
+              {isScanningQuota ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <AlertTriangle className="h-4 w-4" />
+              )}
+              <span className="hidden xl:inline">
+                {autoDetectCodexQuota ? "Auto on" : "Auto off"}
+              </span>
+            </Button>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -307,6 +520,12 @@ function QuickSwitchSection({
           )}
         </div>
       </div>
+      {app.id === "codex" && (
+        <div className="border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          Codex CLI quota auto-switch scans local session logs. Codex Desktop is
+          reminder-only here; its desktop login state is not rewritten.
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {isLoading ? (
@@ -445,6 +664,9 @@ export default function QuickSwitchManager() {
   const [accountStatuses, setAccountStatuses] = useState<AccountStatusMap>(() =>
     readAccountStatuses(),
   );
+  const [autoDetectCodexQuota, setAutoDetectCodexQuota] = useState(() =>
+    readStoredBoolean(AUTO_DETECT_CODEX_QUOTA_STORAGE_KEY, true),
+  );
 
   const handleStatusChange = (
     appId: QuickSwitchAppId,
@@ -462,6 +684,11 @@ export default function QuickSwitchManager() {
       writeAccountStatuses(next);
       return next;
     });
+  };
+
+  const handleAutoDetectCodexQuotaChange = (enabled: boolean) => {
+    setAutoDetectCodexQuota(enabled);
+    writeStoredBoolean(AUTO_DETECT_CODEX_QUOTA_STORAGE_KEY, enabled);
   };
 
   return (
@@ -492,6 +719,8 @@ export default function QuickSwitchManager() {
             key={app.id}
             app={app}
             accountStatuses={accountStatuses}
+            autoDetectCodexQuota={autoDetectCodexQuota}
+            onAutoDetectCodexQuotaChange={handleAutoDetectCodexQuotaChange}
             onStatusChange={handleStatusChange}
           />
         ))}
