@@ -49,6 +49,147 @@ cc-switch.quick-switch.account-status
 
 ## 配置多账号
 
+### 添加账号前先理解入口
+
+Quick Switch 本身不直接创建账号。它读取的是 CC Switch 里已经添加好的 Provider，所以配置不同账号的正确路径是：
+
+1. 先到 Claude 或 Codex 面板添加 Provider。
+2. 每一个 Provider 对应一个可切换账号。
+3. Provider 添加完成后，再进入 Quick Switch 统一账号池查看和切换。
+
+你可以把 Provider 理解成“账号卡片”。只要账号卡片属于 Claude Code 或 Codex CLI，Quick Switch 就会自动收进对应账号池。
+
+### 账号命名建议
+
+多账号场景里，名字比配置本身更容易救命。建议名称里同时写清应用、登录类型和用途：
+
+| 场景                     | 推荐命名                      |
+| ------------------------ | ----------------------------- |
+| Claude Code 主账号       | `Claude Code - Pro main`      |
+| Claude Code 备用 API Key | `Claude Code - API backup 01` |
+| Codex CLI 主登录账号     | `Codex CLI - ChatGPT main`    |
+| Codex CLI 备用 API Key   | `Codex CLI - API backup 01`   |
+| 公司或项目账号           | `Codex CLI - work OAuth`      |
+
+不建议只写 `账号1`、`备用`、`key2` 这类名字。账号多起来后，切换时很难判断哪个还能继续用。
+
+### 添加 Claude Code API Key 账号
+
+适合你有 Anthropic 或第三方 Claude 兼容接口 API Key 的情况。
+
+操作步骤：
+
+1. 打开 CC Switch。
+2. 在左侧或顶部应用切换里选择 Claude。
+3. 点击新增 Provider。
+4. 选择预设 Provider，或选择自定义 Provider。
+5. 填写 Provider 名称，例如 `Claude Code - API backup 01`。
+6. 填写 API Key。
+7. 填写 Base URL。如果是官方 Anthropic，可以使用默认值；如果是第三方兼容接口，填服务商给你的接口地址。
+8. 按需要填写默认模型，例如 Sonnet、Opus 或服务商给出的模型名。
+9. 保存 Provider。
+10. 回到 Quick Switch，确认它出现在 Claude Code 账号池里。
+
+切换后写入位置：
+
+```text
+~/.claude/settings.json
+```
+
+如果 Claude Code 没有马上识别新账号，重新打开 Claude Code 终端即可。
+
+### 添加 Claude Code 账号登录 / OAuth 账号
+
+适合你使用 Claude 官方账号、OAuth 登录、Copilot / Codex OAuth 复用，或项目内已有的登录类 Provider。
+
+操作步骤：
+
+1. 打开 Claude 面板。
+2. 点击新增 Provider。
+3. 选择对应的登录类 Provider 或 OAuth 类 Provider。
+4. 按界面提示完成登录、授权或导入。
+5. 给 Provider 起名，例如 `Claude Code - OAuth main`。
+6. 保存后先在 Claude 面板手动启用一次，确认它能正常工作。
+7. 进入 Quick Switch，确认该账号显示为 `Account Login` 或相近类型。
+
+注意：不同登录类 Provider 的授权方式可能不同。有的会打开浏览器登录，有的会读取本机已有配置。只要最终能在 Claude 面板里作为 Provider 启用，Quick Switch 就能把它纳入账号池。
+
+### 添加 Codex CLI API Key 账号
+
+适合你使用 OpenAI API Key、兼容 OpenAI 的第三方接口，或单独购买的 Codex CLI API Key。
+
+操作步骤：
+
+1. 打开 CC Switch。
+2. 选择 Codex 面板。
+3. 点击新增 Provider。
+4. 选择 OpenAI / Codex / OpenAI-Compatible 相关预设，或选择自定义 Provider。
+5. 填写 Provider 名称，例如 `Codex CLI - API backup 01`。
+6. 填写 API Key。
+7. 填写 Base URL。官方 OpenAI 可用默认值，第三方兼容接口填写服务商地址。
+8. 填写默认模型，例如 `gpt-5-codex`、`gpt-5`，或服务商提供的模型名。
+9. 保存 Provider。
+10. 进入 Quick Switch，确认它出现在 Codex CLI 账号池里。
+
+切换后写入位置：
+
+```text
+~/.codex/auth.json
+~/.codex/config.toml
+```
+
+Codex CLI 通常需要新终端读取新配置。建议通过 Quick Switch 打开的终端继续工作。
+
+### 添加 Codex CLI ChatGPT / OAuth 登录账号
+
+适合你想用 ChatGPT 登录态、Codex OAuth，或其它账号登录方式跑 Codex CLI。
+
+操作步骤：
+
+1. 打开 Codex 面板。
+2. 点击新增 Provider。
+3. 选择 Codex OAuth、ChatGPT 登录或对应账号登录类 Provider。
+4. 按界面提示完成浏览器登录、授权或本地登录态导入。
+5. 命名为 `Codex CLI - ChatGPT main`、`Codex CLI - work OAuth` 这类清楚的名字。
+6. 保存并在 Codex 面板手动启用一次。
+7. 打开一个新 Codex CLI 终端，确认该账号能正常请求。
+8. 回到 Quick Switch，确认它出现在 Codex CLI 账号池里。
+
+如果你同时使用 Codex Desktop，请把 Provider 名称写明 `CLI`。Quick Switch 只切 Codex CLI，不会切 Codex Desktop。
+
+### 推荐排序方式
+
+Provider 在 Quick Switch 里的切换顺序来自 CC Switch 原有 Provider 顺序。建议按下面方式排列：
+
+1. 主账号放最前面。
+2. 额度较多、稳定性高的备用账号放中间。
+3. 临时账号、低额度账号放后面。
+4. 不想自动轮到的账号可以在 Quick Switch 里标记为 Used up。
+
+例如 Codex CLI 可以排成：
+
+```text
+Codex CLI - ChatGPT main
+Codex CLI - API backup 01
+Codex CLI - API backup 02
+Codex CLI - work OAuth
+```
+
+这样点击 `Use next` 时，会按这个顺序跳到下一个 Available 账号。
+
+### 配置完成后的检查
+
+添加完账号后，建议按这个清单检查一次：
+
+1. Claude Code 账号是否都出现在 Claude 面板。
+2. Codex CLI 账号是否都出现在 Codex 面板。
+3. 每个 Provider 是否能在原面板手动启用成功。
+4. Quick Switch 里是否能看到对应账号池。
+5. API Key 账号和账号登录类 Provider 是否都能被识别出来。
+6. 当前不想使用的账号是否已标记为 Used up。
+
+只要这些检查都通过，Quick Switch 就可以正常进行自由切号。
+
 ### Claude Code 多账号
 
 1. 打开 CC Switch 的 Claude 面板。
